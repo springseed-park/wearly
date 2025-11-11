@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from 'react';
 import type { Message, Gender, Tone } from './types';
 import { REGIONS } from './constants';
-import { getWeatherAndRecommendation, getTextRecommendation, getImageRecommendation } from './services/geminiService';
+import { getWeatherAndRecommendation, getTextRecommendation, getImageRecommendation, generateOutfitImage } from './services/geminiService';
 
 const initialMessage: Message = {
   id: 1,
@@ -9,6 +9,117 @@ const initialMessage: Message = {
   // FIX: Switched to double quotes to fix syntax error with inner single quotes.
   text: "안녕하세요! 저는 웨어리예요. '설정'에서 지역, 성별, 말투를 선택해주시면 날씨에 딱 맞는 코디를 추천해드릴게요!"
 };
+
+// --- Tone-specific Message Helpers ---
+
+const getWeatherPlaceholderMessage = (region: string, tone: Tone): string => {
+  switch (tone) {
+    case 'critical':
+      return `${region} 날씨? 보는 중.`;
+    case 'witty':
+      return `오케이, ${region} 날씨 스캔 중! 찌리릿...⚡`;
+    case 'friendly':
+    default:
+      return `${region} 날씨를 확인하고 있어요... 🌦️`;
+  }
+};
+
+const getWeatherErrorMessage = (tone: Tone, error: string): string => {
+  switch (tone) {
+    case 'critical':
+      return `날씨 보다가 에러남. (${error})`;
+    case 'witty':
+      return `날씨의 신이 노하셨나... 에러...😱 (${error})`;
+    case 'friendly':
+    default:
+      return `날씨 확인 중 오류가 발생했어요: ${error}`;
+  }
+};
+
+const getImageGenerationPlaceholderMessage = (tone: Tone): string => {
+  switch (tone) {
+    case 'critical':
+      return '이미지 만드는 중. 재촉 마.';
+    case 'witty':
+      return '예술혼 불태우는 중... 잠시만. 🎨';
+    case 'friendly':
+    default:
+      return '제안된 코디 이미지를 만들고 있어요... 🎨';
+  }
+};
+
+const getImageGenerationSuccessMessage = (tone: Tone): string => {
+  switch (tone) {
+    case 'critical':
+      return '자, 보던가.';
+    case 'witty':
+      return '훗, 이 몸이 좀 감각있지. 😎';
+    case 'friendly':
+    default:
+      return '짠! 요청하신 코디 이미지예요. ✨';
+  }
+};
+
+const getImageGenerationErrorMessage = (tone: Tone, error: string): string => {
+  switch (tone) {
+    case 'critical':
+      return `이미지 만들다 에러남. 알아서 해. (${error})`;
+    case 'witty':
+      return `아놔, 내 예술혼이 거부 반응을... 🤯 에러: ${error}`;
+    case 'friendly':
+    default:
+      return `이미지 생성 중 오류가 발생했어요: ${error}`;
+  }
+};
+
+const getAnalysisPlaceholderMessage = (isImage: boolean, tone: Tone): string => {
+    if (isImage) {
+        switch (tone) {
+            case 'critical':
+                return '사진 보는 중. 평가해주지.';
+            case 'witty':
+                return '어디보자... 패션 감별 들어갑니다~ 🕵️';
+            case 'friendly':
+            default:
+                return '사진을 분석하고 있어요... 📸';
+        }
+    } else {
+        switch (tone) {
+            case 'critical':
+                return '...생각 중.';
+            case 'witty':
+                return '흐음... 기가 막힌 추천을 위한 빌드업 중... 🤔';
+            case 'friendly':
+            default:
+                return '코디를 추천하고 있어요... ✍️';
+        }
+    }
+};
+
+const getAnalysisErrorMessage = (isImage: boolean, tone: Tone, error: string): string => {
+    if (isImage) {
+        switch (tone) {
+            case 'critical':
+                return `사진 보다 에러남. (${error})`;
+            case 'witty':
+                return `이런, 사진이 너무 눈부셨나... 에러! ✨ (${error})`;
+            case 'friendly':
+            default:
+                return `이미지 처리 중 오류가 발생했어요: ${error}`;
+        }
+    } else {
+        switch (tone) {
+            case 'critical':
+                return `추천하다 에러남. (${error})`;
+            case 'witty':
+                return `뇌세포 과부하! 추천 엔진 터짐... 🤯 (${error})`;
+            case 'friendly':
+            default:
+                return `오류가 발생했어요: ${error}`;
+        }
+    }
+};
+
 
 interface SettingsModalProps {
   currentRegion: string;
@@ -125,10 +236,11 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [region, setRegion] = useState('');
   const [gender, setGender] = useState<Gender>('');
-  const [tone, setTone] = useState<Tone>('critical');
+  const [tone, setTone] = useState<Tone>('friendly');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [quickReplies, setQuickReplies] = useState<string[]>([]);
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [lastOutfitSuggestion, setLastOutfitSuggestion] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
   const messageIdCounter = useRef(initialMessage.id); // Start counter from initial message ID
@@ -150,9 +262,9 @@ const App: React.FC = () => {
     return messageIdCounter.current;
   }, []);
 
-  const addMessage = useCallback((role: 'user' | 'assistant', text: string, image?: string): number => {
+  const addMessage = useCallback((role: 'user' | 'assistant', text: string, image?: string, generatedImage?: string, loadingImage?: boolean): number => {
     const newId = getNewMessageId();
-    const newMessage: Message = { id: newId, role, text, image };
+    const newMessage: Message = { id: newId, role, text, image, generatedImage, loadingImage };
     setMessages(prev => [...prev, newMessage]);
     return newId;
   }, [getNewMessageId]);
@@ -175,24 +287,50 @@ const App: React.FC = () => {
     const userMessage = `설정 변경: ${newRegion}` + (genderText ? `, ${genderText}` : '') + `, ${toneText}`;
     addMessage('user', userMessage);
 
-    const placeholderId = addMessage('assistant', `${newRegion} 지역의 날씨를 불러오는 중...`);
+    const placeholderId = addMessage('assistant', getWeatherPlaceholderMessage(newRegion, newTone));
     setQuickReplies([]);
     
     try {
       const data = await getWeatherAndRecommendation(newRegion, newGender, newTone);
       const weatherText = `${newRegion}의 현재 날씨는 ${data.summary} / 현재 ${data.temp}°C (최저 ${data.minTemp}°C / 최고 ${data.maxTemp}°C) 예요.`;
-      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: weatherText} : m));
-      addMessage('assistant', data.suggestion);
-      setQuickReplies(['추천 더 보여줘', '활동량 많은 날엔?', '저녁 약속엔 뭐 입지?']);
+      const combinedText = `${weatherText}\n\n${data.suggestion}`;
+      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: combinedText, generatedImage: undefined } : m));
+      setQuickReplies(['코디 이미지 보여줘', '활동량 많은 날엔?', '저녁 약속엔 뭐 입지?']);
     } catch (e) {
       const error = e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.';
-      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: `날씨 확인 중 오류가 발생했어요: ${error}`} : m));
+      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: getWeatherErrorMessage(newTone, error)} : m));
       setQuickReplies(['날씨 알려줘']);
     }
   }, [addMessage, region, gender, tone]);
 
   const handleSend = useCallback(async (messageText?: string) => {
     const text = (messageText ?? input).trim();
+    
+    const isImageRequest = ['코디 이미지 보여줘', '이 코디 이미지로 보여줘', '제안된 코디 이미지로 보여줘'].includes(text);
+
+    if (isImageRequest && lastOutfitSuggestion) {
+      addMessage('user', text);
+      setInput('');
+      setQuickReplies([]);
+      setIsLoading(true);
+      
+      const placeholderId = addMessage('assistant', getImageGenerationPlaceholderMessage(tone), undefined, undefined, true);
+      const currentSuggestion = lastOutfitSuggestion;
+      setLastOutfitSuggestion('');
+
+      try {
+        const imageUrl = await generateOutfitImage(currentSuggestion, gender);
+        setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: getImageGenerationSuccessMessage(tone), generatedImage: imageUrl ?? undefined, loadingImage: false } : m));
+      } catch (e) {
+        const error = e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.';
+        setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: getImageGenerationErrorMessage(tone, error), loadingImage: false} : m));
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+
     if ((!text && !imageFile) || isLoading) return;
 
     if (imageFile) {
@@ -211,26 +349,36 @@ const App: React.FC = () => {
     setImageFile(null);
     if(fileInputRef.current) fileInputRef.current.value = "";
 
-    const placeholderText = currentImageFile ? '이미지를 분석하고 있어요...' : '웨어리가 생각 중...';
+    const placeholderText = getAnalysisPlaceholderMessage(!!currentImageFile, tone);
     const placeholderId = addMessage('assistant', placeholderText);
 
     try {
-      let data;
       if (currentImageFile) {
-        data = await getImageRecommendation(currentImageFile, text, region, gender, tone);
+        const data = await getImageRecommendation(currentImageFile, text, region, gender, tone);
+        
+        setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: data.analysis } : m));
+        
+        setTimeout(() => {
+            addMessage('assistant', data.suggestion);
+            setLastOutfitSuggestion(data.suggestion);
+        }, 500);
+
+        setQuickReplies(data.quickReplies);
+
       } else {
-        data = await getTextRecommendation(text, region, gender, tone);
+        const data = await getTextRecommendation(text, region, gender, tone);
+        setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: data.advice, generatedImage: undefined } : m));
+        setLastOutfitSuggestion(data.advice);
+        setQuickReplies(data.quickReplies);
       }
-      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: data.advice} : m));
-      setQuickReplies(data.quickReplies);
     } catch (e) {
       const error = e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.';
-      const errorPrefix = currentImageFile ? '이미지 처리 중 오류가 발생했어요: ' : '오류가 발생했어요: ';
-      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: `${errorPrefix}${error}`} : m));
+      const errorMessage = getAnalysisErrorMessage(!!currentImageFile, tone, error);
+      setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: errorMessage } : m));
     } finally {
       setIsLoading(false);
     }
-  }, [input, imageFile, isLoading, region, gender, tone, addMessage]);
+  }, [input, imageFile, isLoading, region, gender, tone, addMessage, lastOutfitSuggestion]);
 
   const handleFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -266,7 +414,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-3">
             <div className="text-xs text-gray-600 hidden sm:block">{settingsDisplayText}</div>
             <button onClick={() => setSettingsOpen(true)} className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 hover:shadow-md text-sm font-medium transition-all">설정</button>
-            <button onClick={() => { setMessages([initialMessage]); setInput(''); setQuickReplies([]); setRegion(''); setGender(''); setTone('critical'); }} className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 hover:shadow-md text-sm font-medium transition-all">초기화</button>
+            <button onClick={() => { setMessages([initialMessage]); setInput(''); setQuickReplies([]); setRegion(''); setGender(''); setTone('friendly'); setLastOutfitSuggestion('') }} className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 hover:shadow-md text-sm font-medium transition-all">초기화</button>
           </div>
         </header>
 
@@ -276,23 +424,43 @@ const App: React.FC = () => {
             {messages.map((m) => (
               <div key={m.id} className={`flex items-end gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`
-                  ${m.image && !m.text ? 'p-2 w-fit' : 'p-4 max-w-[85%] md:max-w-[75%]'}
+                  ${(m.image || m.generatedImage || m.loadingImage) && !m.text ? 'p-2 w-fit' : 'p-4'}
+                  ${m.role === 'user' ? 'max-w-[85%]' : 'max-w-[85%] md:max-w-[75%]'}
                   rounded-2xl
                   ${ m.role === 'user'
                       ? 'bg-gradient-to-br from-blue-500 to-purple-500 text-white rounded-br-lg'
                       : 'bg-white border border-gray-200 text-gray-800 rounded-bl-lg'
                   } shadow-md`}>
+                  {m.loadingImage && (
+                    <div className="w-full aspect-square bg-gray-200 rounded-lg animate-pulse flex items-center justify-center mb-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                  )}
                   {m.image && <img src={m.image} alt="uploaded content" className="w-40 h-auto rounded-lg object-cover" />}
+                  {m.generatedImage && <img src={m.generatedImage} alt="AI generated outfit" className={`w-full h-auto rounded-lg object-cover ${m.text ? 'mb-3' : ''}`} />}
                   {m.text && <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>}
                 </div>
               </div>
             ))}
+            {isLoading && !messages[messages.length-1].loadingImage && (
+              <div className="flex items-end gap-2 justify-start">
+                  <div className="p-4 max-w-[85%] md:max-w-[75%] rounded-2xl bg-white border border-gray-200 text-gray-800 rounded-bl-lg shadow-md">
+                      <div className="flex items-center gap-2 text-gray-500">
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse delay-75"></div>
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse delay-150"></div>
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse delay-300"></div>
+                      </div>
+                  </div>
+              </div>
+            )}
           </div>
         </main>
 
         {/* Quick Replies & Composer */}
         <footer className="shrink-0">
-          {quickReplies.length > 0 && (
+          {quickReplies.length > 0 && !isLoading && (
             <div className="px-6 py-3 border-t border-gray-200/80 bg-white/50 flex gap-2 flex-wrap">
               {quickReplies.map((q, i) => (
                 <button key={i} onClick={() => handleSend(q)} className="px-4 py-2 rounded-full border border-purple-200 bg-purple-50 text-purple-700 text-sm hover:bg-purple-100 hover:shadow-sm transition-all">{q}</button>
