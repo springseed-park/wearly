@@ -972,14 +972,14 @@ const App: React.FC = () => {
     const placeholderId = addMessage('assistant', '', undefined, undefined, true);
     
     try {
-        const { imageUrl, suggestion } = await generateOutfitFromLikedImages(images, region, gender, tone, colors, height, weight);
-        
+        const { imageUrl, suggestion } = await generateOutfitFromLikedImages(images, region, gender, tone, colors, height, weight, profileImage);
+
         if (imageUrl) {
             setMessages(prev => prev.map(m => m.id === placeholderId ? {
                 ...m,
-                text: '', 
-                generatedImage: imageUrl, 
-                loadingImage: false, 
+                text: '',
+                generatedImage: imageUrl,
+                loadingImage: false,
                 imagePrompt: suggestion
             } : m));
             addMessage('assistant', getImageGenerationSuccessMessage(tone));

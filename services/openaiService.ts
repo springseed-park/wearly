@@ -126,200 +126,92 @@ export async function getRegionFromCoords(lat: number, lon: number): Promise<str
   }
 }
 
-// Korea Meteorological Administration API key
-const KMA_API_KEY = 'a5bf589ba8e345a90c96899f74ecd61fba3b9d951c12eb4df57724dfedacf35a';
-
-// Region to coordinates mapping for Korea Meteorological Administration API
-const REGION_COORDS: { [key: string]: { lat: number; lon: number; nx: number; ny: number } } = {
-  '서울': { lat: 37.5665, lon: 126.9780, nx: 60, ny: 127 },
-  '부산': { lat: 35.1796, lon: 129.0756, nx: 98, ny: 76 },
-  '대구': { lat: 35.8714, lon: 128.6014, nx: 89, ny: 90 },
-  '인천': { lat: 37.4563, lon: 126.7052, nx: 55, ny: 124 },
-  '광주': { lat: 35.1595, lon: 126.8526, nx: 58, ny: 74 },
-  '대전': { lat: 36.3504, lon: 127.3845, nx: 67, ny: 100 },
-  '울산': { lat: 35.5384, lon: 129.3114, nx: 102, ny: 84 },
-  '세종': { lat: 36.4800, lon: 127.2890, nx: 66, ny: 103 },
-  '경기': { lat: 37.4138, lon: 127.5183, nx: 73, ny: 125 },
-  '강원': { lat: 37.8228, lon: 128.1555, nx: 73, ny: 134 },
-  '충북': { lat: 36.8000, lon: 127.7000, nx: 69, ny: 107 },
-  '충남': { lat: 36.5184, lon: 126.8000, nx: 68, ny: 100 },
-  '전북': { lat: 35.7175, lon: 127.1530, nx: 63, ny: 89 },
-  '전남': { lat: 34.8679, lon: 126.9910, nx: 51, ny: 67 },
-  '경북': { lat: 36.4919, lon: 128.8889, nx: 91, ny: 106 },
-  '경남': { lat: 35.4606, lon: 128.2132, nx: 91, ny: 77 },
-  '제주': { lat: 33.4996, lon: 126.5312, nx: 52, ny: 38 },
+// Region name mapping for weather API
+const REGION_NAMES: { [key: string]: string } = {
+  '서울': 'Seoul',
+  '부산': 'Busan',
+  '대구': 'Daegu',
+  '인천': 'Incheon',
+  '광주': 'Gwangju',
+  '대전': 'Daejeon',
+  '울산': 'Ulsan',
+  '세종': 'Sejong',
+  '경기': 'Suwon',
+  '강원': 'Chuncheon',
+  '충북': 'Cheongju',
+  '충남': 'Hongseong',
+  '전북': 'Jeonju',
+  '전남': 'Mokpo',
+  '경북': 'Andong',
+  '경남': 'Changwon',
+  '제주': 'Jeju',
 };
 
-// Get weather data from Korea Meteorological Administration API
+// Get weather data using wttr.in API (simple and reliable)
 async function getKMAWeatherData(region: string): Promise<{ temp: number; minTemp: number; maxTemp: number; summary: string; description: string }> {
   try {
-    const coords = REGION_COORDS[region] || REGION_COORDS['서울'];
+    const cityName = REGION_NAMES[region] || 'Seoul';
 
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const baseDate = `${year}${month}${day}`;
+    console.log(`[Weather API] Fetching weather for ${region} (${cityName})...`);
 
-    // Calculate base_time for ultra short-term (every hour at :40)
-    let baseHour = now.getHours();
-    const minutes = now.getMinutes();
+    // wttr.in provides accurate weather data in JSON format
+    const url = `https://wttr.in/${cityName}?format=j1&lang=ko`;
 
-    // API updates hourly at :40, so if before :40, use previous hour
-    if (minutes < 40) {
-      baseHour = baseHour - 1;
-      if (baseHour < 0) {
-        baseHour = 23;
-      }
-    }
-    const baseTime = `${String(baseHour).padStart(2, '0')}30`;
+    const response = await fetch(url);
+    const data = await response.json();
 
-    // For forecast, use 0500 as it has the most complete day data
-    // Note: TMN is available from 0600, TMX from 1500, but 0500 forecast has predictions
-    let forecastBaseTime = '0500';
-    if (baseHour >= 23) forecastBaseTime = '2300';
-    else if (baseHour >= 20) forecastBaseTime = '2000';
-    else if (baseHour >= 17) forecastBaseTime = '1700';
-    else if (baseHour >= 14) forecastBaseTime = '1400';
-    else if (baseHour >= 11) forecastBaseTime = '1100';
-    else if (baseHour >= 8) forecastBaseTime = '0800';
-    else if (baseHour >= 5) forecastBaseTime = '0500';
-    else if (baseHour >= 2) forecastBaseTime = '0200';
+    console.log(`[Weather API] Weather data received for ${region}`);
 
-    console.log(`[Weather API] Date: ${baseDate}, Time: ${now.getHours()}:${now.getMinutes()}`);
-    console.log(`[Weather API] Using base_time for current: ${baseTime}, forecast: ${forecastBaseTime}`);
+    // Extract current weather
+    const current = data.current_condition[0];
+    const today = data.weather[0];
 
-    // 1. Get current temperature (Ultra Short-term)
-    // Use CORS proxy to bypass CORS restrictions
-    const corsProxy = 'https://corsproxy.io/?';
-    const currentUrl = `${corsProxy}${encodeURIComponent(`http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst?serviceKey=${KMA_API_KEY}&numOfRows=10&pageNo=1&base_date=${baseDate}&base_time=${baseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`)}`;
+    const temp = parseInt(current.temp_C);
+    const minTemp = parseInt(today.mintempC);
+    const maxTemp = parseInt(today.maxtempC);
 
-    console.log(`[Weather API] Fetching current weather for ${region}...`);
-
-    let temp = 15;
-    let pty = 0;
-
-    try {
-      const currentResponse = await fetch(currentUrl);
-      const currentData = await currentResponse.json();
-
-      console.log(`[Weather API] Current response code:`, currentData.response?.header?.resultCode);
-
-      if (currentData.response?.header?.resultCode === '00' && currentData.response?.body?.items?.item) {
-        const items = Array.isArray(currentData.response.body.items.item)
-          ? currentData.response.body.items.item
-          : [currentData.response.body.items.item];
-
-        for (const item of items) {
-          if (item.category === 'T1H') {
-            temp = parseFloat(item.obsrValue);
-            console.log(`[Weather API] ✓ Current temp: ${temp}°C`);
-          } else if (item.category === 'PTY') {
-            pty = parseInt(item.obsrValue);
-          }
-        }
-      } else {
-        console.warn(`[Weather API] Current API failed:`, currentData.response?.header?.resultMsg);
-      }
-    } catch (err) {
-      console.error(`[Weather API] Error fetching current weather:`, err);
-    }
-
-    // 2. Get min/max temperature (Short-term Forecast)
-    const forecastUrl = `${corsProxy}${encodeURIComponent(`http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${KMA_API_KEY}&numOfRows=500&pageNo=1&base_date=${baseDate}&base_time=${forecastBaseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`)}`;
-
-    console.log(`[Weather API] Fetching forecast for ${region}...`);
-
-    let minTemp: number | null = null;
-    let maxTemp: number | null = null;
-    let sky = 1;
-
-    try {
-      const forecastResponse = await fetch(forecastUrl);
-      const forecastData = await forecastResponse.json();
-
-      console.log(`[Weather API] Forecast response code:`, forecastData.response?.header?.resultCode);
-
-      if (forecastData.response?.header?.resultCode === '00' && forecastData.response?.body?.items?.item) {
-        const items = Array.isArray(forecastData.response.body.items.item)
-          ? forecastData.response.body.items.item
-          : [forecastData.response.body.items.item];
-
-        console.log(`[Weather API] Processing ${items.length} forecast items...`);
-
-        // Find TMN and TMX for today
-        for (const item of items) {
-          if (item.fcstDate === baseDate) {
-            if (item.category === 'TMN' && minTemp === null) {
-              minTemp = parseFloat(item.fcstValue);
-              console.log(`[Weather API] ✓ Min temp: ${minTemp}°C`);
-            } else if (item.category === 'TMX' && maxTemp === null) {
-              maxTemp = parseFloat(item.fcstValue);
-              console.log(`[Weather API] ✓ Max temp: ${maxTemp}°C`);
-            } else if (item.category === 'SKY' && item.fcstTime === `${String(baseHour).padStart(2, '0')}00`) {
-              sky = parseInt(item.fcstValue);
-            } else if (item.category === 'PTY' && item.fcstTime === `${String(baseHour).padStart(2, '0')}00` && pty === 0) {
-              pty = parseInt(item.fcstValue);
-            }
-          }
-        }
-
-        // If TMN/TMX not found, search in all dates (sometimes provided in different date)
-        if (minTemp === null || maxTemp === null) {
-          console.warn(`[Weather API] TMN/TMX not found for today, searching all dates...`);
-          for (const item of items) {
-            if (item.category === 'TMN' && minTemp === null) {
-              minTemp = parseFloat(item.fcstValue);
-              console.log(`[Weather API] ⚠ Found Min temp from ${item.fcstDate}: ${minTemp}°C`);
-            } else if (item.category === 'TMX' && maxTemp === null) {
-              maxTemp = parseFloat(item.fcstValue);
-              console.log(`[Weather API] ⚠ Found Max temp from ${item.fcstDate}: ${maxTemp}°C`);
-            }
-          }
-        }
-      } else {
-        console.warn(`[Weather API] Forecast API failed:`, forecastData.response?.header?.resultMsg);
-      }
-    } catch (err) {
-      console.error(`[Weather API] Error fetching forecast:`, err);
-    }
-
-    // Use fallback values if API failed
-    if (minTemp === null) {
-      minTemp = temp - 5;
-      console.warn(`[Weather API] Using fallback min temp: ${minTemp}°C`);
-    }
-    if (maxTemp === null) {
-      maxTemp = temp + 5;
-      console.warn(`[Weather API] Using fallback max temp: ${maxTemp}°C`);
-    }
-
-    // Determine weather summary
+    // Determine Korean weather description
+    const weatherCode = parseInt(current.weatherCode);
     let summary = '맑음';
-    if (pty > 0) {
-      if (pty === 1) summary = '비';
-      else if (pty === 2) summary = '비/눈';
-      else if (pty === 3) summary = '눈';
-      else if (pty === 4) summary = '소나기';
+
+    // wttr.in weather codes
+    if (weatherCode >= 200 && weatherCode < 300) {
+      summary = '뇌우';
+    } else if (weatherCode >= 300 && weatherCode < 400) {
+      summary = '이슬비';
+    } else if (weatherCode >= 500 && weatherCode < 600) {
+      summary = '비';
+    } else if (weatherCode >= 600 && weatherCode < 700) {
+      summary = '눈';
+    } else if (weatherCode >= 700 && weatherCode < 800) {
+      summary = '안개';
+    } else if (weatherCode === 800) {
+      summary = '맑음';
+    } else if (weatherCode === 801 || weatherCode === 802) {
+      summary = '구름 조금';
+    } else if (weatherCode === 803) {
+      summary = '구름 많음';
+    } else if (weatherCode === 804) {
+      summary = '흐림';
     } else {
-      if (sky === 1) summary = '맑음';
-      else if (sky === 3) summary = '구름많음';
-      else if (sky === 4) summary = '흐림';
+      // Use Korean description from API
+      const korDesc = current.lang_ko?.[0]?.value || current.weatherDesc?.[0]?.value || '맑음';
+      summary = korDesc;
     }
 
-    const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${Math.round(temp)}도입니다.`;
+    const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${temp}도입니다.`;
 
-    console.log(`[Weather API] ✅ Final: temp=${Math.round(temp)}°C, min=${Math.round(minTemp)}°C, max=${Math.round(maxTemp)}°C, ${summary}`);
+    console.log(`[Weather API] ✅ ${region}: ${temp}°C (${minTemp}°C ~ ${maxTemp}°C), ${summary}`);
 
     return {
-      temp: Math.round(temp),
-      minTemp: Math.round(minTemp),
-      maxTemp: Math.round(maxTemp),
+      temp,
+      minTemp,
+      maxTemp,
       summary,
       description
     };
   } catch (error) {
-    console.error('[Weather API] ❌ Fatal error:', error);
+    console.error('[Weather API] ❌ Error fetching weather:', error);
     return getFallbackWeatherData(region);
   }
 }
@@ -608,24 +500,32 @@ export async function generateOutfitImage(
       bodyTypeDescription = `The model should have a ${bodyType}, approximately ${height}cm tall. `;
     }
 
-    // Create a detailed prompt for image generation with a person wearing the outfit
-    const prompt = `A professional fashion photograph of a ${genderText} model wearing the outfit, full body shot. Style: modern Korean fashion street style.
+    // Face description if profile image exists
+    let faceDescription = '';
+    if (profileImage) {
+      faceDescription = 'The model should have Korean facial features with a natural, friendly expression. ';
+    }
 
-${bodyTypeDescription}
+    // Create a detailed prompt for image generation with a Korean person wearing the outfit
+    const prompt = `A professional fashion photograph of a ${genderText} Korean model wearing the outfit, full body shot. Style: modern Korean fashion street style.
+
+${bodyTypeDescription}${faceDescription}
 
 Outfit description: ${suggestion}
 
 Requirements:
-- A real person wearing the complete outfit
+- A real Korean person wearing the complete outfit
+- East Asian/Korean facial features and appearance
 - Full body shot showing the entire outfit from head to toe
 - Clean white or minimal studio background
 - Professional fashion photography style
-- Modern and trendy Korean fashion aesthetic
+- Modern and trendy Korean street fashion aesthetic
 - Model standing in a natural, casual pose
 - Well-lit, high quality studio lighting
 - The outfit should be clearly visible and well-fitted to the model
-- Focus on showing how the outfit looks when worn
-- Stylish and fashionable presentation`;
+- Focus on showing how the outfit looks when worn on a Korean model
+- Stylish and fashionable presentation
+- Natural Korean beauty standards`;
 
     const response = await openai.images.generate({
       model: 'dall-e-3',
@@ -661,7 +561,7 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-// Generate outfit from liked images
+// Generate outfit from liked images - extracts actual clothing items and combines them
 export async function generateOutfitFromLikedImages(
   images: string[],
   region: string,
@@ -669,7 +569,8 @@ export async function generateOutfitFromLikedImages(
   tone: Tone,
   colors: string[],
   height: string,
-  weight: string
+  weight: string,
+  profileImage?: string | null
 ): Promise<{ imageUrl: string | null; suggestion: string }> {
   if (images.length === 0) {
     throw new Error("No images provided for recommendation.");
@@ -678,7 +579,7 @@ export async function generateOutfitFromLikedImages(
   const genderText = gender === 'male' ? '남성' : gender === 'female' ? '여성' : '남녀 공용';
   const toneInstruction = getTonePrompt(tone);
 
-  // Analyze images and generate outfit suggestion
+  // Step 1: Extract specific clothing items from each image
   const messages: any[] = [
     {
       role: 'user',
@@ -689,24 +590,36 @@ export async function generateOutfitFromLikedImages(
         })),
         {
           type: 'text',
-          text: `당신은 패션 전문가입니다. 사용자가 '좋아요'한 여러 코디 사진들을 보고, 그 스타일들을 종합하여 새로운 코디를 제안해주세요.
+          text: `당신은 패션 전문가입니다. 사용자가 '내코디'에 저장한 옷 사진들입니다.
 
-<미션>
-1. **분석:** 첨부된 여러 이미지들의 공통적인 스타일, 색상, 아이템, 분위기를 파악하세요.
-2. **제안:** 분석 내용을 바탕으로, 사용자가 좋아할 만한 새로운 코디를 구체적으로 제안하세요. 이 텍스트는 이미지 생성에 쓰일 것이므로 스타일 묘사는 명확해야 합니다. (예: '애쉬 그레이 와이드 슬랙스에 세이지 그린 컬러의 니트 베스트를 레이어드하고, 실버 액세서리로 포인트를 준 시크한 룩')
+<중요한 미션>
+각 이미지에서 구체적인 옷 아이템을 정확히 추출하고, 이 아이템들을 조합한 코디를 만들어주세요.
+
+**우선순위:**
+1. 이미지 속 실제 옷 아이템이 최우선입니다 (색상, 소재, 스타일 그대로)
+2. 사용자 선호 색상은 참고만 하고, 실제 이미지의 아이템을 우선합니다
+3. 여러 이미지의 아이템을 자연스럽게 조합하세요
+
+**추출 및 조합 방법:**
+- 각 이미지에서: "색상 + 아이템명" 정확히 파악 (예: "화이트 니트 원피스", "블랙 롱 패딩", "베이지 와이드 팬츠")
+- 조합 시: 실제 추출한 아이템들을 레이어드 또는 매칭
+- 예시: 이미지1에 "화이트 니트 원피스", 이미지2에 "블랙 패딩" → "화이트 니트 원피스 위에 블랙 롱 패딩을 레이어드한 코디"
 
 <사용자 정보>
 - 지역: ${region}
 - 성별: ${genderText}
 ${getPhysicalInfoPromptText(height, weight)}
+
+**참고사항 (우선순위 낮음):**
 ${regionalStyleContext}
 ${getColorPromptText(colors)}
-${temperatureClothingGuide}
 
 다음 스타일로 답변해주세요:
 ${toneInstruction}
 
-새로운 코디 제안을 짧고 간결하게 작성해주세요.`
+**출력 형식:**
+이미지에서 추출한 실제 아이템들을 조합한 코디를 구체적으로 설명해주세요.
+(예: "베이지 오버사이즈 니트에 블랙 와이드 슬랙스, 그 위에 카키 트렌치코트를 레이어드하고 화이트 스니커즈로 마무리한 룩")`
         }
       ]
     }
@@ -716,7 +629,7 @@ ${toneInstruction}
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: messages,
-      temperature: 0.7,
+      temperature: 0.5, // Lower temperature for more accurate item extraction
     });
 
     const suggestion = completion.choices[0]?.message?.content || '';
@@ -725,8 +638,8 @@ ${toneInstruction}
       throw new Error("Failed to generate a suggestion from the provided images.");
     }
 
-    // Generate an image from the new suggestion
-    const imageUrl = await generateOutfitImage(suggestion, gender, height, weight);
+    // Generate an image from the extracted and combined items
+    const imageUrl = await generateOutfitImage(suggestion, gender, height, weight, profileImage);
 
     return { imageUrl, suggestion };
 
