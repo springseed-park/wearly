@@ -159,65 +159,133 @@ async function getKMAWeatherData(region: string): Promise<{ temp: number; minTem
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
     const baseDate = `${year}${month}${day}`;
 
-    // Use previous hour for base_time (API updates hourly at 10 minutes past the hour)
+    // Calculate base_time for ultra short-term forecast (every hour at :40)
     let baseHour = now.getHours();
-    if (now.getMinutes() < 10) {
+    const minutes = now.getMinutes();
+
+    // API updates hourly at :40, so if before :40, use previous hour
+    if (minutes < 40) {
       baseHour = baseHour - 1;
-      if (baseHour < 0) baseHour = 23;
+      if (baseHour < 0) {
+        baseHour = 23;
+      }
     }
-    const baseTime = `${String(baseHour).padStart(2, '0')}00`;
+    const baseTime = `${String(baseHour).padStart(2, '0')}30`;
 
-    // Call Korea Meteorological Administration Ultra Short-term Forecast API
-    const url = `http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst?serviceKey=${KMA_API_KEY}&numOfRows=10&pageNo=1&base_date=${baseDate}&base_time=${baseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`;
+    // Calculate base_time for short-term forecast (0200, 0500, 0800, 1100, 1400, 1700, 2000, 2300)
+    const forecastBaseHours = [2, 5, 8, 11, 14, 17, 20, 23];
+    let forecastBaseHour = 2;
+    for (let i = forecastBaseHours.length - 1; i >= 0; i--) {
+      if (baseHour >= forecastBaseHours[i]) {
+        forecastBaseHour = forecastBaseHours[i];
+        break;
+      }
+    }
+    const forecastBaseTime = `${String(forecastBaseHour).padStart(2, '0')}00`;
 
-    const response = await fetch(url);
-    const data = await response.json();
+    console.log(`[Weather API] Fetching weather for ${region} at ${baseDate} ${baseTime}`);
 
-    if (data.response?.header?.resultCode === '00' && data.response?.body?.items?.item) {
-      const items = data.response.body.items.item;
+    // 1. Get current temperature and weather condition (Ultra Short-term Forecast)
+    const currentUrl = `http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst?serviceKey=${KMA_API_KEY}&numOfRows=10&pageNo=1&base_date=${baseDate}&base_time=${baseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`;
 
-      let temp = 15;
-      let pty = 0; // Precipitation type
-      let sky = 1; // Sky condition
+    console.log(`[Weather API] Current weather URL: ${currentUrl}`);
+
+    const currentResponse = await fetch(currentUrl);
+    const currentData = await currentResponse.json();
+
+    console.log(`[Weather API] Current response:`, JSON.stringify(currentData, null, 2));
+
+    let temp = 15;
+    let pty = 0; // Precipitation type
+    let reh = 50; // Humidity
+
+    if (currentData.response?.header?.resultCode === '00' && currentData.response?.body?.items?.item) {
+      const items = Array.isArray(currentData.response.body.items.item)
+        ? currentData.response.body.items.item
+        : [currentData.response.body.items.item];
 
       for (const item of items) {
         if (item.category === 'T1H') { // Temperature
           temp = parseFloat(item.obsrValue);
+          console.log(`[Weather API] Current temp: ${temp}°C`);
         } else if (item.category === 'PTY') { // Precipitation type
           pty = parseInt(item.obsrValue);
-        } else if (item.category === 'SKY') { // Sky condition
-          sky = parseInt(item.obsrValue);
+          console.log(`[Weather API] Precipitation type: ${pty}`);
+        } else if (item.category === 'REH') { // Humidity
+          reh = parseInt(item.obsrValue);
         }
       }
-
-      // Estimate min/max temp based on current temp and time of day
-      const minTemp = Math.round(temp - 3 - Math.random() * 2);
-      const maxTemp = Math.round(temp + 3 + Math.random() * 2);
-
-      // Determine weather summary based on PTY and SKY
-      let summary = '맑음';
-      if (pty > 0) {
-        if (pty === 1) summary = '비';
-        else if (pty === 2) summary = '비/눈';
-        else if (pty === 3) summary = '눈';
-        else if (pty === 4) summary = '소나기';
-      } else {
-        if (sky === 1) summary = '맑음';
-        else if (sky === 3) summary = '구름많음';
-        else if (sky === 4) summary = '흐림';
-      }
-
-      const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${Math.round(temp)}도입니다.`;
-
-      return { temp: Math.round(temp), minTemp, maxTemp, summary, description };
-    } else {
-      // Fallback to mock data if API fails
-      console.warn('KMA API failed, using fallback weather data');
-      return getFallbackWeatherData(region);
     }
+
+    // 2. Get min/max temperature (Short-term Forecast)
+    const forecastUrl = `http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${KMA_API_KEY}&numOfRows=290&pageNo=1&base_date=${baseDate}&base_time=${forecastBaseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`;
+
+    console.log(`[Weather API] Forecast URL: ${forecastUrl}`);
+
+    const forecastResponse = await fetch(forecastUrl);
+    const forecastData = await forecastResponse.json();
+
+    console.log(`[Weather API] Forecast response header:`, forecastData.response?.header);
+
+    let minTemp = temp - 5;
+    let maxTemp = temp + 5;
+    let sky = 1; // Sky condition
+
+    if (forecastData.response?.header?.resultCode === '00' && forecastData.response?.body?.items?.item) {
+      const items = Array.isArray(forecastData.response.body.items.item)
+        ? forecastData.response.body.items.item
+        : [forecastData.response.body.items.item];
+
+      console.log(`[Weather API] Total forecast items: ${items.length}`);
+
+      // Filter today's forecast items only
+      const todayItems = items.filter((item: any) => item.fcstDate === baseDate);
+      console.log(`[Weather API] Today's items: ${todayItems.length}`);
+
+      // Extract TMN (최저기온) and TMX (최고기온)
+      for (const item of todayItems) {
+        if (item.category === 'TMN') {
+          minTemp = parseFloat(item.fcstValue);
+          console.log(`[Weather API] Min temp: ${minTemp}°C`);
+        } else if (item.category === 'TMX') {
+          maxTemp = parseFloat(item.fcstValue);
+          console.log(`[Weather API] Max temp: ${maxTemp}°C`);
+        } else if (item.category === 'SKY' && item.fcstTime === `${String(baseHour).padStart(2, '0')}00`) {
+          sky = parseInt(item.fcstValue);
+          console.log(`[Weather API] Sky condition: ${sky}`);
+        } else if (item.category === 'PTY' && item.fcstTime === `${String(baseHour).padStart(2, '0')}00` && pty === 0) {
+          pty = parseInt(item.fcstValue);
+          console.log(`[Weather API] Precipitation type from forecast: ${pty}`);
+        }
+      }
+    }
+
+    // Determine weather summary based on PTY and SKY
+    let summary = '맑음';
+    if (pty > 0) {
+      if (pty === 1) summary = '비';
+      else if (pty === 2) summary = '비/눈';
+      else if (pty === 3) summary = '눈';
+      else if (pty === 4) summary = '소나기';
+    } else {
+      if (sky === 1) summary = '맑음';
+      else if (sky === 3) summary = '구름많음';
+      else if (sky === 4) summary = '흐림';
+    }
+
+    const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${Math.round(temp)}도입니다.`;
+
+    console.log(`[Weather API] Final result: temp=${Math.round(temp)}, min=${Math.round(minTemp)}, max=${Math.round(maxTemp)}, summary=${summary}`);
+
+    return {
+      temp: Math.round(temp),
+      minTemp: Math.round(minTemp),
+      maxTemp: Math.round(maxTemp),
+      summary,
+      description
+    };
   } catch (error) {
     console.error('Error fetching KMA weather data:', error);
     // Fallback to mock data if API call fails
