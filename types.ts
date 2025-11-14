@@ -4,7 +4,10 @@ export interface Message {
   text: string;
   image?: string; // User-uploaded image
   generatedImage?: string; // AI-generated image
+  imagePrompt?: string; // The prompt used for generation
   loadingImage?: boolean;
+  feedback?: 'like' | 'dislike' | null;
+  historyOnly?: boolean;
 }
 
 export type Gender = 'male' | 'female' | 'unisex' | '';
