@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from 'react';
 import type { Message, Gender, Tone } from './types';
 import { REGIONS } from './constants';
-import { getWeatherAndRecommendation, getTextRecommendation, getImageRecommendation, generateOutfitImage } from './services/openaiService';
+import { getWeatherAndRecommendation, getTextRecommendation, getImageRecommendation, generateOutfitImage, getRegionFromCoords } from './services/openaiService';
 
 const initialMessage: Message = {
   id: 1,
   role: 'assistant',
   // FIX: Switched to double quotes to fix syntax error with inner single quotes.
-  text: "안녕하세요! 저는 웨어리예요. '설정'에서 지역, 성별, 말투를 선택해주시면 날씨에 딱 맞는 코디를 추천해드릴게요!"
+  text: "안녕하세요! 저는 웨어리예요. '설정'에서 지역, 성별, 말투를 선택하시거나, 위치 정보 제공에 동의하시면 날씨에 딱 맞는 코디를 추천해드릴게요!"
 };
 
 // --- Tone-specific Message Helpers ---
@@ -133,13 +133,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ currentRegion, currentGen
   const [selectedRegion, setSelectedRegion] = useState(currentRegion);
   const [selectedGender, setSelectedGender] = useState(currentGender);
   const [selectedTone, setSelectedTone] = useState(currentTone);
+  const [isLocating, setIsLocating] = useState(false);
 
   const genderOptions: { value: Gender, label: string }[] = [
     { value: 'male', label: '남성' },
     { value: 'female', label: '여성' },
     { value: 'unisex', label: '상관없음' },
   ];
-  
+
   const toneOptions: { value: Tone, label: string }[] = [
     { value: 'critical', label: '까칠한 친구' },
     { value: 'witty', label: '쾌활한 친구' },
@@ -149,6 +150,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ currentRegion, currentGen
   const handleApply = () => {
     onApply({ region: selectedRegion, gender: selectedGender, tone: selectedTone });
   };
+
+  const handleGetCurrentLocation = useCallback(() => {
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+          const region = await getRegionFromCoords(latitude, longitude);
+          if (region) {
+            setSelectedRegion(region);
+          } else {
+            alert('위치에서 지역을 찾을 수 없습니다. 수동으로 선택해주세요.');
+          }
+        } catch (error) {
+          console.error('Error getting region:', error);
+          alert('위치 확인 중 오류가 발생했습니다.');
+        } finally {
+          setIsLocating(false);
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        alert('위치 정보를 가져올 수 없습니다. 브라우저 설정을 확인해주세요.');
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end md:items-center justify-center p-4 z-50 backdrop-blur-sm">
@@ -200,7 +229,32 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ currentRegion, currentGen
         </div>
 
         <div className="mb-6">
-          <h3 className="text-md font-semibold text-gray-700 mb-3">지역</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-md font-semibold text-gray-700">지역</h3>
+            <button
+              onClick={handleGetCurrentLocation}
+              disabled={isLocating}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 text-xs font-medium hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLocating ? (
+                <>
+                  <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>위치 확인 중...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span>현재 위치로 설정</span>
+                </>
+              )}
+            </button>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {REGIONS.map((r) => (
               <button
