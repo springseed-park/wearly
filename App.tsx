@@ -830,7 +830,7 @@ const App: React.FC = () => {
       setLastOutfitSuggestion('');
 
       try {
-        const imageUrl = await generateOutfitImage(currentSuggestion, gender);
+        const imageUrl = await generateOutfitImage(currentSuggestion, gender, height, weight, profileImage);
         if (imageUrl) {
             setMessages(prev => prev.map(m => m.id === placeholderId ? {...m, text: '', generatedImage: imageUrl, loadingImage: false, imagePrompt: currentSuggestion } : m));
             addMessage('assistant', getImageGenerationSuccessMessage(tone));
@@ -1022,11 +1022,7 @@ const App: React.FC = () => {
         <header className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-gray-200/80 shrink-0 dark:border-gray-700/80">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-2xl shadow-lg overflow-hidden">
-                {profileImage ? (
-                    <img src={profileImage} alt="Profile" className="w-full h-full object-cover" />
-                ) : (
-                    'W'
-                )}
+                W
             </div>
             <div>
               <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">웨어리</h1>
