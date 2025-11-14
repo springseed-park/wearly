@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, ChangeEvent } from 'react';
 import type { Message, Gender, Tone } from './types';
 import { REGIONS } from './constants';
-import { getWeatherAndRecommendation, getTextRecommendation, getImageRecommendation, generateOutfitImage } from './services/geminiService';
+import { getWeatherAndRecommendation, getTextRecommendation, getImageRecommendation, generateOutfitImage } from './services/openaiService';
 
 const initialMessage: Message = {
   id: 1,
