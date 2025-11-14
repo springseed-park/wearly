@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      base: '/', // Change to '/wearly/' if deploying to GitHub Pages with repo name
+      base: '/wearly/', // GitHub Pages deployment with repo name
       server: {
         port: 3000,
         host: '0.0.0.0',
