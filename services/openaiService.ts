@@ -500,24 +500,32 @@ export async function generateOutfitImage(
       bodyTypeDescription = `The model should have a ${bodyType}, approximately ${height}cm tall. `;
     }
 
-    // Create a detailed prompt for image generation with a person wearing the outfit
-    const prompt = `A professional fashion photograph of a ${genderText} model wearing the outfit, full body shot. Style: modern Korean fashion street style.
+    // Face description if profile image exists
+    let faceDescription = '';
+    if (profileImage) {
+      faceDescription = 'The model should have Korean facial features with a natural, friendly expression. ';
+    }
 
-${bodyTypeDescription}
+    // Create a detailed prompt for image generation with a Korean person wearing the outfit
+    const prompt = `A professional fashion photograph of a ${genderText} Korean model wearing the outfit, full body shot. Style: modern Korean fashion street style.
+
+${bodyTypeDescription}${faceDescription}
 
 Outfit description: ${suggestion}
 
 Requirements:
-- A real person wearing the complete outfit
+- A real Korean person wearing the complete outfit
+- East Asian/Korean facial features and appearance
 - Full body shot showing the entire outfit from head to toe
 - Clean white or minimal studio background
 - Professional fashion photography style
-- Modern and trendy Korean fashion aesthetic
+- Modern and trendy Korean street fashion aesthetic
 - Model standing in a natural, casual pose
 - Well-lit, high quality studio lighting
 - The outfit should be clearly visible and well-fitted to the model
-- Focus on showing how the outfit looks when worn
-- Stylish and fashionable presentation`;
+- Focus on showing how the outfit looks when worn on a Korean model
+- Stylish and fashionable presentation
+- Natural Korean beauty standards`;
 
     const response = await openai.images.generate({
       model: 'dall-e-3',
@@ -553,7 +561,7 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-// Generate outfit from liked images
+// Generate outfit from liked images - extracts actual clothing items and combines them
 export async function generateOutfitFromLikedImages(
   images: string[],
   region: string,
@@ -561,7 +569,8 @@ export async function generateOutfitFromLikedImages(
   tone: Tone,
   colors: string[],
   height: string,
-  weight: string
+  weight: string,
+  profileImage?: string | null
 ): Promise<{ imageUrl: string | null; suggestion: string }> {
   if (images.length === 0) {
     throw new Error("No images provided for recommendation.");
@@ -570,7 +579,7 @@ export async function generateOutfitFromLikedImages(
   const genderText = gender === 'male' ? '남성' : gender === 'female' ? '여성' : '남녀 공용';
   const toneInstruction = getTonePrompt(tone);
 
-  // Analyze images and generate outfit suggestion
+  // Step 1: Extract specific clothing items from each image
   const messages: any[] = [
     {
       role: 'user',
@@ -581,24 +590,36 @@ export async function generateOutfitFromLikedImages(
         })),
         {
           type: 'text',
-          text: `당신은 패션 전문가입니다. 사용자가 '좋아요'한 여러 코디 사진들을 보고, 그 스타일들을 종합하여 새로운 코디를 제안해주세요.
+          text: `당신은 패션 전문가입니다. 사용자가 '내코디'에 저장한 옷 사진들입니다.
 
-<미션>
-1. **분석:** 첨부된 여러 이미지들의 공통적인 스타일, 색상, 아이템, 분위기를 파악하세요.
-2. **제안:** 분석 내용을 바탕으로, 사용자가 좋아할 만한 새로운 코디를 구체적으로 제안하세요. 이 텍스트는 이미지 생성에 쓰일 것이므로 스타일 묘사는 명확해야 합니다. (예: '애쉬 그레이 와이드 슬랙스에 세이지 그린 컬러의 니트 베스트를 레이어드하고, 실버 액세서리로 포인트를 준 시크한 룩')
+<중요한 미션>
+각 이미지에서 구체적인 옷 아이템을 정확히 추출하고, 이 아이템들을 조합한 코디를 만들어주세요.
+
+**우선순위:**
+1. 이미지 속 실제 옷 아이템이 최우선입니다 (색상, 소재, 스타일 그대로)
+2. 사용자 선호 색상은 참고만 하고, 실제 이미지의 아이템을 우선합니다
+3. 여러 이미지의 아이템을 자연스럽게 조합하세요
+
+**추출 및 조합 방법:**
+- 각 이미지에서: "색상 + 아이템명" 정확히 파악 (예: "화이트 니트 원피스", "블랙 롱 패딩", "베이지 와이드 팬츠")
+- 조합 시: 실제 추출한 아이템들을 레이어드 또는 매칭
+- 예시: 이미지1에 "화이트 니트 원피스", 이미지2에 "블랙 패딩" → "화이트 니트 원피스 위에 블랙 롱 패딩을 레이어드한 코디"
 
 <사용자 정보>
 - 지역: ${region}
 - 성별: ${genderText}
 ${getPhysicalInfoPromptText(height, weight)}
+
+**참고사항 (우선순위 낮음):**
 ${regionalStyleContext}
 ${getColorPromptText(colors)}
-${temperatureClothingGuide}
 
 다음 스타일로 답변해주세요:
 ${toneInstruction}
 
-새로운 코디 제안을 짧고 간결하게 작성해주세요.`
+**출력 형식:**
+이미지에서 추출한 실제 아이템들을 조합한 코디를 구체적으로 설명해주세요.
+(예: "베이지 오버사이즈 니트에 블랙 와이드 슬랙스, 그 위에 카키 트렌치코트를 레이어드하고 화이트 스니커즈로 마무리한 룩")`
         }
       ]
     }
@@ -608,7 +629,7 @@ ${toneInstruction}
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: messages,
-      temperature: 0.7,
+      temperature: 0.5, // Lower temperature for more accurate item extraction
     });
 
     const suggestion = completion.choices[0]?.message?.content || '';
@@ -617,8 +638,8 @@ ${toneInstruction}
       throw new Error("Failed to generate a suggestion from the provided images.");
     }
 
-    // Generate an image from the new suggestion
-    const imageUrl = await generateOutfitImage(suggestion, gender, height, weight);
+    // Generate an image from the extracted and combined items
+    const imageUrl = await generateOutfitImage(suggestion, gender, height, weight, profileImage);
 
     return { imageUrl, suggestion };
 
