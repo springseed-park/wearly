@@ -126,16 +126,113 @@ export async function getRegionFromCoords(lat: number, lon: number): Promise<str
   }
 }
 
-// Mock weather data generator (for demo purposes)
-const getMockWeatherData = (region: string): { temp: number; minTemp: number; maxTemp: number; summary: string; description: string } => {
-  // Generate somewhat realistic weather based on current date
+// Korea Meteorological Administration API key
+const KMA_API_KEY = 'a5bf589ba8e345a90c96899f74ecd61fba3b9d951c12eb4df57724dfedacf35a';
+
+// Region to coordinates mapping for Korea Meteorological Administration API
+const REGION_COORDS: { [key: string]: { lat: number; lon: number; nx: number; ny: number } } = {
+  '서울': { lat: 37.5665, lon: 126.9780, nx: 60, ny: 127 },
+  '부산': { lat: 35.1796, lon: 129.0756, nx: 98, ny: 76 },
+  '대구': { lat: 35.8714, lon: 128.6014, nx: 89, ny: 90 },
+  '인천': { lat: 37.4563, lon: 126.7052, nx: 55, ny: 124 },
+  '광주': { lat: 35.1595, lon: 126.8526, nx: 58, ny: 74 },
+  '대전': { lat: 36.3504, lon: 127.3845, nx: 67, ny: 100 },
+  '울산': { lat: 35.5384, lon: 129.3114, nx: 102, ny: 84 },
+  '세종': { lat: 36.4800, lon: 127.2890, nx: 66, ny: 103 },
+  '경기': { lat: 37.4138, lon: 127.5183, nx: 73, ny: 125 },
+  '강원': { lat: 37.8228, lon: 128.1555, nx: 73, ny: 134 },
+  '충북': { lat: 36.8000, lon: 127.7000, nx: 69, ny: 107 },
+  '충남': { lat: 36.5184, lon: 126.8000, nx: 68, ny: 100 },
+  '전북': { lat: 35.7175, lon: 127.1530, nx: 63, ny: 89 },
+  '전남': { lat: 34.8679, lon: 126.9910, nx: 51, ny: 67 },
+  '경북': { lat: 36.4919, lon: 128.8889, nx: 91, ny: 106 },
+  '경남': { lat: 35.4606, lon: 128.2132, nx: 91, ny: 77 },
+  '제주': { lat: 33.4996, lon: 126.5312, nx: 52, ny: 38 },
+};
+
+// Get weather data from Korea Meteorological Administration API
+async function getKMAWeatherData(region: string): Promise<{ temp: number; minTemp: number; maxTemp: number; summary: string; description: string }> {
+  try {
+    const coords = REGION_COORDS[region] || REGION_COORDS['서울'];
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const baseDate = `${year}${month}${day}`;
+
+    // Use previous hour for base_time (API updates hourly at 10 minutes past the hour)
+    let baseHour = now.getHours();
+    if (now.getMinutes() < 10) {
+      baseHour = baseHour - 1;
+      if (baseHour < 0) baseHour = 23;
+    }
+    const baseTime = `${String(baseHour).padStart(2, '0')}00`;
+
+    // Call Korea Meteorological Administration Ultra Short-term Forecast API
+    const url = `http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst?serviceKey=${KMA_API_KEY}&numOfRows=10&pageNo=1&base_date=${baseDate}&base_time=${baseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.response?.header?.resultCode === '00' && data.response?.body?.items?.item) {
+      const items = data.response.body.items.item;
+
+      let temp = 15;
+      let pty = 0; // Precipitation type
+      let sky = 1; // Sky condition
+
+      for (const item of items) {
+        if (item.category === 'T1H') { // Temperature
+          temp = parseFloat(item.obsrValue);
+        } else if (item.category === 'PTY') { // Precipitation type
+          pty = parseInt(item.obsrValue);
+        } else if (item.category === 'SKY') { // Sky condition
+          sky = parseInt(item.obsrValue);
+        }
+      }
+
+      // Estimate min/max temp based on current temp and time of day
+      const minTemp = Math.round(temp - 3 - Math.random() * 2);
+      const maxTemp = Math.round(temp + 3 + Math.random() * 2);
+
+      // Determine weather summary based on PTY and SKY
+      let summary = '맑음';
+      if (pty > 0) {
+        if (pty === 1) summary = '비';
+        else if (pty === 2) summary = '비/눈';
+        else if (pty === 3) summary = '눈';
+        else if (pty === 4) summary = '소나기';
+      } else {
+        if (sky === 1) summary = '맑음';
+        else if (sky === 3) summary = '구름많음';
+        else if (sky === 4) summary = '흐림';
+      }
+
+      const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${Math.round(temp)}도입니다.`;
+
+      return { temp: Math.round(temp), minTemp, maxTemp, summary, description };
+    } else {
+      // Fallback to mock data if API fails
+      console.warn('KMA API failed, using fallback weather data');
+      return getFallbackWeatherData(region);
+    }
+  } catch (error) {
+    console.error('Error fetching KMA weather data:', error);
+    // Fallback to mock data if API call fails
+    return getFallbackWeatherData(region);
+  }
+}
+
+// Fallback weather data generator (used when KMA API fails)
+const getFallbackWeatherData = (region: string): { temp: number; minTemp: number; maxTemp: number; summary: string; description: string } => {
   const now = new Date();
-  const month = now.getMonth() + 1; // 1-12
+  const month = now.getMonth() + 1;
 
   let baseTemp = 20;
   let tempVariation = 5;
 
-  // Seasonal adjustment
   if (month >= 12 || month <= 2) { // Winter
     baseTemp = 0;
     tempVariation = 8;
@@ -184,8 +281,8 @@ export async function getWeatherAndRecommendation(
   weight: string
 ): Promise<WeatherData> {
   try {
-    // Get mock weather data (in production, this would call a real weather API)
-    const weather = getMockWeatherData(region);
+    // Get weather data from Korea Meteorological Administration API
+    const weather = await getKMAWeatherData(region);
 
     // Generate outfit recommendation using OpenAI
     const genderText = gender === 'male' ? '남성' : gender === 'female' ? '여성' : '남녀 공용';
@@ -242,7 +339,7 @@ export async function getTextRecommendation(
     const toneInstruction = getTonePrompt(tone);
 
     // Get current weather for context
-    const weather = getMockWeatherData(region);
+    const weather = await getKMAWeatherData(region);
 
     const prompt = `당신은 패션 코디네이터입니다. 사용자의 질문에 답변해주세요.
 
@@ -304,7 +401,7 @@ export async function getImageRecommendation(
     // Convert file to base64 data URL
     const base64DataUrl = await fileToDataUrl(file);
 
-    const weather = getMockWeatherData(region);
+    const weather = await getKMAWeatherData(region);
 
     const analysisPrompt = `당신은 패션 전문가입니다. 이 사진을 분석하고 평가해주세요.
 
@@ -381,23 +478,55 @@ ${toneInstruction}
 
 export async function generateOutfitImage(
   suggestion: string,
-  gender: Gender
+  gender: Gender,
+  height?: string,
+  weight?: string,
+  profileImage?: string | null
 ): Promise<string | null> {
   try {
     const genderText = gender === 'male' ? 'male' : gender === 'female' ? 'female' : 'unisex';
 
-    // Create a detailed prompt for image generation
-    const prompt = `A clean, professional fashion outfit photo on white background. Style: modern Korean fashion, ${genderText} clothing.
+    // Build body type description based on height and weight
+    let bodyTypeDescription = '';
+    if (height && weight) {
+      const heightNum = parseInt(height);
+      const weightNum = parseInt(weight);
+      const bmi = weightNum / ((heightNum / 100) ** 2);
+
+      let bodyType = 'average build';
+      if (bmi < 18.5) {
+        bodyType = 'slim, slender build';
+      } else if (bmi >= 18.5 && bmi < 23) {
+        bodyType = 'fit, athletic build';
+      } else if (bmi >= 23 && bmi < 25) {
+        bodyType = 'average, healthy build';
+      } else if (bmi >= 25 && bmi < 30) {
+        bodyType = 'sturdy, stocky build';
+      } else {
+        bodyType = 'plus-size, curvy build';
+      }
+
+      bodyTypeDescription = `The model should have a ${bodyType}, approximately ${height}cm tall. `;
+    }
+
+    // Create a detailed prompt for image generation with a person wearing the outfit
+    const prompt = `A professional fashion photograph of a ${genderText} model wearing the outfit, full body shot. Style: modern Korean fashion street style.
+
+${bodyTypeDescription}
 
 Outfit description: ${suggestion}
 
 Requirements:
-- Clean white or minimal background
+- A real person wearing the complete outfit
+- Full body shot showing the entire outfit from head to toe
+- Clean white or minimal studio background
 - Professional fashion photography style
 - Modern and trendy Korean fashion aesthetic
-- Clothing laid out flat or on a mannequin
-- Well-lit, high quality
-- Focus on the outfit items mentioned`;
+- Model standing in a natural, casual pose
+- Well-lit, high quality studio lighting
+- The outfit should be clearly visible and well-fitted to the model
+- Focus on showing how the outfit looks when worn
+- Stylish and fashionable presentation`;
 
     const response = await openai.images.generate({
       model: 'dall-e-3',
@@ -498,7 +627,7 @@ ${toneInstruction}
     }
 
     // Generate an image from the new suggestion
-    const imageUrl = await generateOutfitImage(suggestion, gender);
+    const imageUrl = await generateOutfitImage(suggestion, gender, height, weight);
 
     return { imageUrl, suggestion };
 
