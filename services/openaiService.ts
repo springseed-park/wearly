@@ -159,68 +159,167 @@ async function getKMAWeatherData(region: string): Promise<{ temp: number; minTem
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
     const baseDate = `${year}${month}${day}`;
 
-    // Use previous hour for base_time (API updates hourly at 10 minutes past the hour)
+    // Calculate base_time for ultra short-term (every hour at :40)
     let baseHour = now.getHours();
-    if (now.getMinutes() < 10) {
+    const minutes = now.getMinutes();
+
+    // API updates hourly at :40, so if before :40, use previous hour
+    if (minutes < 40) {
       baseHour = baseHour - 1;
-      if (baseHour < 0) baseHour = 23;
+      if (baseHour < 0) {
+        baseHour = 23;
+      }
     }
-    const baseTime = `${String(baseHour).padStart(2, '0')}00`;
+    const baseTime = `${String(baseHour).padStart(2, '0')}30`;
 
-    // Call Korea Meteorological Administration Ultra Short-term Forecast API
-    const url = `http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst?serviceKey=${KMA_API_KEY}&numOfRows=10&pageNo=1&base_date=${baseDate}&base_time=${baseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`;
+    // For forecast, use 0500 as it has the most complete day data
+    // Note: TMN is available from 0600, TMX from 1500, but 0500 forecast has predictions
+    let forecastBaseTime = '0500';
+    if (baseHour >= 23) forecastBaseTime = '2300';
+    else if (baseHour >= 20) forecastBaseTime = '2000';
+    else if (baseHour >= 17) forecastBaseTime = '1700';
+    else if (baseHour >= 14) forecastBaseTime = '1400';
+    else if (baseHour >= 11) forecastBaseTime = '1100';
+    else if (baseHour >= 8) forecastBaseTime = '0800';
+    else if (baseHour >= 5) forecastBaseTime = '0500';
+    else if (baseHour >= 2) forecastBaseTime = '0200';
 
-    const response = await fetch(url);
-    const data = await response.json();
+    console.log(`[Weather API] Date: ${baseDate}, Time: ${now.getHours()}:${now.getMinutes()}`);
+    console.log(`[Weather API] Using base_time for current: ${baseTime}, forecast: ${forecastBaseTime}`);
 
-    if (data.response?.header?.resultCode === '00' && data.response?.body?.items?.item) {
-      const items = data.response.body.items.item;
+    // 1. Get current temperature (Ultra Short-term)
+    // Use CORS proxy to bypass CORS restrictions
+    const corsProxy = 'https://corsproxy.io/?';
+    const currentUrl = `${corsProxy}${encodeURIComponent(`http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst?serviceKey=${KMA_API_KEY}&numOfRows=10&pageNo=1&base_date=${baseDate}&base_time=${baseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`)}`;
 
-      let temp = 15;
-      let pty = 0; // Precipitation type
-      let sky = 1; // Sky condition
+    console.log(`[Weather API] Fetching current weather for ${region}...`);
 
-      for (const item of items) {
-        if (item.category === 'T1H') { // Temperature
-          temp = parseFloat(item.obsrValue);
-        } else if (item.category === 'PTY') { // Precipitation type
-          pty = parseInt(item.obsrValue);
-        } else if (item.category === 'SKY') { // Sky condition
-          sky = parseInt(item.obsrValue);
+    let temp = 15;
+    let pty = 0;
+
+    try {
+      const currentResponse = await fetch(currentUrl);
+      const currentData = await currentResponse.json();
+
+      console.log(`[Weather API] Current response code:`, currentData.response?.header?.resultCode);
+
+      if (currentData.response?.header?.resultCode === '00' && currentData.response?.body?.items?.item) {
+        const items = Array.isArray(currentData.response.body.items.item)
+          ? currentData.response.body.items.item
+          : [currentData.response.body.items.item];
+
+        for (const item of items) {
+          if (item.category === 'T1H') {
+            temp = parseFloat(item.obsrValue);
+            console.log(`[Weather API] ✓ Current temp: ${temp}°C`);
+          } else if (item.category === 'PTY') {
+            pty = parseInt(item.obsrValue);
+          }
         }
-      }
-
-      // Estimate min/max temp based on current temp and time of day
-      const minTemp = Math.round(temp - 3 - Math.random() * 2);
-      const maxTemp = Math.round(temp + 3 + Math.random() * 2);
-
-      // Determine weather summary based on PTY and SKY
-      let summary = '맑음';
-      if (pty > 0) {
-        if (pty === 1) summary = '비';
-        else if (pty === 2) summary = '비/눈';
-        else if (pty === 3) summary = '눈';
-        else if (pty === 4) summary = '소나기';
       } else {
-        if (sky === 1) summary = '맑음';
-        else if (sky === 3) summary = '구름많음';
-        else if (sky === 4) summary = '흐림';
+        console.warn(`[Weather API] Current API failed:`, currentData.response?.header?.resultMsg);
       }
-
-      const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${Math.round(temp)}도입니다.`;
-
-      return { temp: Math.round(temp), minTemp, maxTemp, summary, description };
-    } else {
-      // Fallback to mock data if API fails
-      console.warn('KMA API failed, using fallback weather data');
-      return getFallbackWeatherData(region);
+    } catch (err) {
+      console.error(`[Weather API] Error fetching current weather:`, err);
     }
+
+    // 2. Get min/max temperature (Short-term Forecast)
+    const forecastUrl = `${corsProxy}${encodeURIComponent(`http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${KMA_API_KEY}&numOfRows=500&pageNo=1&base_date=${baseDate}&base_time=${forecastBaseTime}&nx=${coords.nx}&ny=${coords.ny}&dataType=JSON`)}`;
+
+    console.log(`[Weather API] Fetching forecast for ${region}...`);
+
+    let minTemp: number | null = null;
+    let maxTemp: number | null = null;
+    let sky = 1;
+
+    try {
+      const forecastResponse = await fetch(forecastUrl);
+      const forecastData = await forecastResponse.json();
+
+      console.log(`[Weather API] Forecast response code:`, forecastData.response?.header?.resultCode);
+
+      if (forecastData.response?.header?.resultCode === '00' && forecastData.response?.body?.items?.item) {
+        const items = Array.isArray(forecastData.response.body.items.item)
+          ? forecastData.response.body.items.item
+          : [forecastData.response.body.items.item];
+
+        console.log(`[Weather API] Processing ${items.length} forecast items...`);
+
+        // Find TMN and TMX for today
+        for (const item of items) {
+          if (item.fcstDate === baseDate) {
+            if (item.category === 'TMN' && minTemp === null) {
+              minTemp = parseFloat(item.fcstValue);
+              console.log(`[Weather API] ✓ Min temp: ${minTemp}°C`);
+            } else if (item.category === 'TMX' && maxTemp === null) {
+              maxTemp = parseFloat(item.fcstValue);
+              console.log(`[Weather API] ✓ Max temp: ${maxTemp}°C`);
+            } else if (item.category === 'SKY' && item.fcstTime === `${String(baseHour).padStart(2, '0')}00`) {
+              sky = parseInt(item.fcstValue);
+            } else if (item.category === 'PTY' && item.fcstTime === `${String(baseHour).padStart(2, '0')}00` && pty === 0) {
+              pty = parseInt(item.fcstValue);
+            }
+          }
+        }
+
+        // If TMN/TMX not found, search in all dates (sometimes provided in different date)
+        if (minTemp === null || maxTemp === null) {
+          console.warn(`[Weather API] TMN/TMX not found for today, searching all dates...`);
+          for (const item of items) {
+            if (item.category === 'TMN' && minTemp === null) {
+              minTemp = parseFloat(item.fcstValue);
+              console.log(`[Weather API] ⚠ Found Min temp from ${item.fcstDate}: ${minTemp}°C`);
+            } else if (item.category === 'TMX' && maxTemp === null) {
+              maxTemp = parseFloat(item.fcstValue);
+              console.log(`[Weather API] ⚠ Found Max temp from ${item.fcstDate}: ${maxTemp}°C`);
+            }
+          }
+        }
+      } else {
+        console.warn(`[Weather API] Forecast API failed:`, forecastData.response?.header?.resultMsg);
+      }
+    } catch (err) {
+      console.error(`[Weather API] Error fetching forecast:`, err);
+    }
+
+    // Use fallback values if API failed
+    if (minTemp === null) {
+      minTemp = temp - 5;
+      console.warn(`[Weather API] Using fallback min temp: ${minTemp}°C`);
+    }
+    if (maxTemp === null) {
+      maxTemp = temp + 5;
+      console.warn(`[Weather API] Using fallback max temp: ${maxTemp}°C`);
+    }
+
+    // Determine weather summary
+    let summary = '맑음';
+    if (pty > 0) {
+      if (pty === 1) summary = '비';
+      else if (pty === 2) summary = '비/눈';
+      else if (pty === 3) summary = '눈';
+      else if (pty === 4) summary = '소나기';
+    } else {
+      if (sky === 1) summary = '맑음';
+      else if (sky === 3) summary = '구름많음';
+      else if (sky === 4) summary = '흐림';
+    }
+
+    const description = `${region} 지역의 날씨는 ${summary}이며, 기온은 ${Math.round(temp)}도입니다.`;
+
+    console.log(`[Weather API] ✅ Final: temp=${Math.round(temp)}°C, min=${Math.round(minTemp)}°C, max=${Math.round(maxTemp)}°C, ${summary}`);
+
+    return {
+      temp: Math.round(temp),
+      minTemp: Math.round(minTemp),
+      maxTemp: Math.round(maxTemp),
+      summary,
+      description
+    };
   } catch (error) {
-    console.error('Error fetching KMA weather data:', error);
-    // Fallback to mock data if API call fails
+    console.error('[Weather API] ❌ Fatal error:', error);
     return getFallbackWeatherData(region);
   }
 }
